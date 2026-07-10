@@ -1,0 +1,19 @@
+node_modules
+dist
+dist-ssr
+*.local
+*.tsbuildinfo
+
+# Secretos por ambiente: .env.local nunca se versiona (ver *.local arriba,
+# cubre environments/.env.local en la raíz y en cada app).
+# .env.development sí se versiona como template con placeholders.
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

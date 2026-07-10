@@ -1,0 +1,56 @@
+import { prisma } from '../../../../../infrastructure/persistence/prisma-client';
+import type {
+  CreateUserInput,
+  UserRecord,
+  UserRepositoryPort,
+} from '../ports/user-repository.port';
+
+// El email es CITEXT en la base: la comparación de igualdad ya es
+// case-insensitive a nivel de Postgres.
+export class PrismaUserRepository implements UserRepositoryPort {
+  async findByEmail(email: string): Promise<UserRecord | null> {
+    const user = await prisma.user.findFirst({
+      where: { email, deletedAt: null, status: true },
+    });
+    return user ? toRecord(user) : null;
+  }
+
+  async findById(id: string): Promise<UserRecord | null> {
+    const user = await prisma.user.findFirst({
+      where: { id, deletedAt: null, status: true },
+    });
+    return user ? toRecord(user) : null;
+  }
+
+  async create(input: CreateUserInput): Promise<UserRecord> {
+    const user = await prisma.user.create({
+      data: {
+        email: input.email,
+        fullName: input.fullName,
+        passwordHash: input.passwordHash,
+      },
+    });
+    return toRecord(user);
+  }
+
+  async registerLogin(userId: string): Promise<void> {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { lastLoginAt: new Date() },
+    });
+  }
+}
+
+function toRecord(user: {
+  id: string;
+  email: string;
+  fullName: string;
+  passwordHash: string;
+}): UserRecord {
+  return {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    passwordHash: user.passwordHash,
+  };
+}

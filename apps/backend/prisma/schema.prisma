@@ -1,0 +1,434 @@
+// ContextHub AI — Prisma schema
+// Refleja el diseño acordado: PostgreSQL 18, 3 schemas (security/main/ai),
+// pgvector, uuidv7 como PK, columnas estándar (status/created_at/updated_at/
+// deleted_at) en todas las tablas. Nombres de tabla y columna en snake_case
+// vía @@map/@map; el cliente generado expone camelCase (ergonomía normal
+// de Prisma, no cambia nada en la base real).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector, pg_trgm, citext]
+  schemas    = ["security", "main", "ai"]
+}
+
+// =====================================================================
+// security
+// =====================================================================
+
+model User {
+  id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  email           String    @unique
+  passwordHash    String    @map("password_hash")
+  fullName        String    @map("full_name") @db.VarChar(150)
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  lastLoginAt     DateTime? @map("last_login_at")
+  status          Boolean   @default(true)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  sessions               Session[]
+  apiKeys                ApiKey[]
+  auditLogs              AuditLog[]
+  organizationsCreated   Organization[]           @relation("OrganizationCreatedBy")
+  organizationMemberships OrganizationMember[]    @relation("OrganizationMemberUser")
+  invitationsSent        OrganizationInvitation[] @relation("InvitationInvitedBy")
+  spacesCreated          Space[]                  @relation("SpaceCreatedBy")
+  conversations          Conversation[]
+  aiUsageLogs            AiUsageLog[]
+
+  @@map("users")
+  @@schema("security")
+}
+
+model Session {
+  id                String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  refreshTokenHash  String    @map("refresh_token_hash")
+  ipAddress         String?   @map("ip_address") @db.Inet
+  userAgent         String?   @map("user_agent")
+  expiresAt         DateTime  @map("expires_at")
+  revokedAt         DateTime? @map("revoked_at")
+  status            Boolean   @default(true)
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  deletedAt         DateTime? @map("deleted_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("sessions")
+  @@schema("security")
+}
+
+model ApiKey {
+  id         String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  name       String    @db.VarChar(100)
+  keyHash    String    @map("key_hash")
+  lastUsedAt DateTime? @map("last_used_at")
+  expiresAt  DateTime? @map("expires_at")
+  status     Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("api_keys")
+  @@schema("security")
+}
+
+// Ledger de auditoría (append-only). Mantiene las 4 columnas estándar por
+// consistencia aunque en la práctica no se actualicen/borren filas.
+model AuditLog {
+  id         String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId     String?   @map("user_id") @db.Uuid
+  action     String    @db.VarChar(100)
+  entityType String?   @map("entity_type") @db.VarChar(100)
+  entityId   String?   @map("entity_id") @db.Uuid
+  metadata   Json      @default("{}")
+  ipAddress  String?   @map("ip_address") @db.Inet
+  status     Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+  @@schema("security")
+}
+
+// =====================================================================
+// main
+// =====================================================================
+
+model Organization {
+  id        String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  createdBy String    @map("created_by") @db.Uuid
+  name      String    @db.VarChar(150)
+  slug      String    @unique @db.VarChar(160)
+  status    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  creator     User                      @relation("OrganizationCreatedBy", fields: [createdBy], references: [id])
+  members     OrganizationMember[]
+  invitations OrganizationInvitation[]
+  spaces      Space[]
+  tags        Tag[]
+  aiUsageLogs AiUsageLog[]
+
+  @@map("organizations")
+  @@schema("main")
+}
+
+// Many-to-many users <-> organizations. Rol simple, sin RBAC granular.
+model OrganizationMember {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  role           String    @default("member") @db.VarChar(20) // owner | admin | member
+  invitedBy      String?   @map("invited_by") @db.Uuid
+  joinedAt       DateTime? @map("joined_at")
+  status         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation("OrganizationMemberUser", fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+  @@schema("main")
+}
+
+// Invitación por email + token, con o sin cuenta previa.
+model OrganizationInvitation {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  email          String
+  role           String    @default("member") @db.VarChar(20) // admin | member
+  invitedBy      String    @map("invited_by") @db.Uuid
+  tokenHash      String    @map("token_hash")
+  expiresAt      DateTime  @map("expires_at")
+  acceptedAt     DateTime? @map("accepted_at")
+  status         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  invitedByUser User        @relation("InvitationInvitedBy", fields: [invitedBy], references: [id])
+
+  @@map("organization_invitations")
+  @@schema("main")
+}
+
+// Espacios (antes "proyectos"). Visibles para todos los miembros de la org.
+model Space {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  createdBy      String    @map("created_by") @db.Uuid
+  name           String    @db.VarChar(150)
+  slug           String    @db.VarChar(160)
+  description    String?
+  status         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  creator         User             @relation("SpaceCreatedBy", fields: [createdBy], references: [id])
+  contextSources  ContextSource[]
+  contextDocuments ContextDocument[]
+  contextChunks   ContextChunk[]
+  spaceTags       SpaceTag[]
+  embeddings      Embedding[]
+  conversations   Conversation[]
+  aiUsageLogs     AiUsageLog[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@map("spaces")
+  @@schema("main")
+}
+
+enum ContextSourceType {
+  file
+  url
+  text
+  note
+
+  @@map("context_source_type")
+  @@schema("main")
+}
+
+model ContextSource {
+  id         String            @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  spaceId    String            @map("space_id") @db.Uuid
+  sourceType ContextSourceType @map("source_type")
+  title      String            @db.VarChar(200)
+  originUrl  String?           @map("origin_url")
+  status     Boolean           @default(true)
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+  deletedAt  DateTime?         @map("deleted_at")
+
+  space     Space              @relation(fields: [spaceId], references: [id])
+  documents ContextDocument[]
+  chunks    ContextChunk[]
+
+  @@index([spaceId])
+  @@map("context_sources")
+  @@schema("main")
+}
+
+model ContextDocument {
+  id            String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  sourceId      String    @map("source_id") @db.Uuid
+  spaceId       String    @map("space_id") @db.Uuid
+  fileName      String    @map("file_name") @db.VarChar(255)
+  filePath      String    @map("file_path")
+  mimeType      String?   @map("mime_type") @db.VarChar(100)
+  fileSizeBytes BigInt?   @map("file_size_bytes")
+  status        Boolean   @default(true)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  source ContextSource @relation(fields: [sourceId], references: [id])
+  space  Space         @relation(fields: [spaceId], references: [id])
+
+  @@index([spaceId])
+  @@index([sourceId])
+  @@map("context_documents")
+  @@schema("main")
+}
+
+model ContextChunk {
+  id         String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  sourceId   String    @map("source_id") @db.Uuid
+  spaceId    String    @map("space_id") @db.Uuid
+  chunkIndex Int       @map("chunk_index")
+  content    String
+  tokenCount Int?      @map("token_count")
+  status     Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  source     ContextSource @relation(fields: [sourceId], references: [id])
+  space      Space         @relation(fields: [spaceId], references: [id])
+  embeddings Embedding[]
+
+  @@index([spaceId])
+  @@index([sourceId])
+  @@map("context_chunks")
+  @@schema("main")
+}
+
+// Biblioteca de tags a nivel organización, aplicados a espacios vía SpaceTag.
+model Tag {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String    @db.VarChar(60)
+  color          String?   @db.VarChar(20)
+  status         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  spaceTags    SpaceTag[]
+
+  @@unique([organizationId, name])
+  @@map("tags")
+  @@schema("main")
+}
+
+model SpaceTag {
+  id        String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  spaceId   String    @map("space_id") @db.Uuid
+  tagId     String    @map("tag_id") @db.Uuid
+  status    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  space Space @relation(fields: [spaceId], references: [id])
+  tag   Tag   @relation(fields: [tagId], references: [id])
+
+  @@unique([spaceId, tagId])
+  @@map("space_tags")
+  @@schema("main")
+}
+
+// =====================================================================
+// ai
+// =====================================================================
+
+// El tipo vector no tiene soporte nativo estable en el DSL de Prisma
+// todavía -> se declara Unsupported. Prisma Migrate igual genera la
+// columna correctamente; las queries de similitud (cosineDistance, etc.)
+// se hacen con $queryRaw. El índice HNSW se agrega a mano en la migración
+// generada (ver README / instrucciones de migración).
+model Embedding {
+  id        String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  chunkId   String    @map("chunk_id") @db.Uuid
+  spaceId   String    @map("space_id") @db.Uuid
+  embedding Unsupported("vector(768)")
+  modelName String    @default("text-embedding-004") @map("model_name") @db.VarChar(100)
+  status    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  chunk ContextChunk @relation(fields: [chunkId], references: [id])
+  space Space        @relation(fields: [spaceId], references: [id])
+
+  @@index([spaceId])
+  @@map("embeddings")
+  @@schema("ai")
+}
+
+model Conversation {
+  id        String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  spaceId   String    @map("space_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  title     String?   @db.VarChar(200)
+  status    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  space    Space     @relation(fields: [spaceId], references: [id])
+  user     User      @relation(fields: [userId], references: [id])
+  messages Message[]
+
+  @@index([spaceId])
+  @@map("conversations")
+  @@schema("ai")
+}
+
+enum MessageRole {
+  user
+  assistant
+  system
+
+  @@map("message_role")
+  @@schema("ai")
+}
+
+model Message {
+  id             String      @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  conversationId String      @map("conversation_id") @db.Uuid
+  role           MessageRole
+  content        String
+  tokensInput    Int?        @map("tokens_input")
+  tokensOutput   Int?        @map("tokens_output")
+  modelName      String?     @map("model_name") @db.VarChar(100)
+  status         Boolean     @default(true)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  deletedAt      DateTime?   @map("deleted_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId])
+  @@map("messages")
+  @@schema("ai")
+}
+
+model AiUsageLog {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId         String?   @map("user_id") @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  spaceId        String?   @map("space_id") @db.Uuid
+  provider       String    @default("gemini") @db.VarChar(50)
+  modelName      String    @map("model_name") @db.VarChar(100)
+  tokensInput    Int?      @map("tokens_input")
+  tokensOutput   Int?      @map("tokens_output")
+  latencyMs      Int?      @map("latency_ms")
+  costUsd        Decimal?  @map("cost_usd") @db.Decimal(10, 6)
+  status         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  user         User?         @relation(fields: [userId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  space        Space?        @relation(fields: [spaceId], references: [id])
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([spaceId])
+  @@map("ai_usage_logs")
+  @@schema("ai")
+}
+
+model PromptTemplate {
+  id        String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  name      String    @unique @db.VarChar(100)
+  content   String
+  status    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@map("prompt_templates")
+  @@schema("ai")
+}

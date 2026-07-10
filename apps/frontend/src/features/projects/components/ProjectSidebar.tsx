@@ -1,4 +1,5 @@
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useOrganizationStore } from '@/features/organizations/application/use-active-organization';
 import { useProjectList } from '../application/use-project-list';
 import { useProjectStore } from '../application/use-active-project';
 import { ProjectListItem } from './ProjectListItem';
@@ -8,6 +9,12 @@ export function ProjectSidebar() {
   const { projects, isLoading } = useProjectList();
   const activeProjectId = useProjectStore((state) => state.activeProjectId);
   const setActiveProject = useProjectStore((state) => state.setActiveProject);
+  const activeOrganizationId = useOrganizationStore((state) => state.activeOrganizationId);
+
+  // Los espacios se filtran por la organización activa (menú de
+  // organizaciones del sidebar izquierdo): cada espacio pertenece a una
+  // única organización.
+  const visibleProjects = projects.filter((project) => project.organizationId === activeOrganizationId);
 
   return (
     <div className="flex h-full flex-col">
@@ -21,8 +28,13 @@ export function ProjectSidebar() {
           {isLoading && (
             <div className="px-3 py-2 text-xs text-muted-foreground">Cargando proyectos…</div>
           )}
+          {!isLoading && visibleProjects.length === 0 && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              No hay espacios en esta organización.
+            </div>
+          )}
           {!isLoading &&
-            projects.map((project) => (
+            visibleProjects.map((project) => (
               <ProjectListItem
                 key={project.id}
                 project={project}

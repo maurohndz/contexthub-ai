@@ -16,6 +16,7 @@ class MockProjectApiAdapter implements ProjectApiPort {
     await delay(500);
     const project: Project = {
       id: `proj-${Date.now()}`,
+      organizationId: input.organizationId,
       name: input.name,
       description: input.description,
       docCount: 0,

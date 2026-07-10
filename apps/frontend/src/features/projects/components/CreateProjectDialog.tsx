@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { mockProjectApiAdapter } from '../infra/mock-project-api.adapter';
 import { useProjectStore } from '../application/use-active-project';
+import { useOrganizationStore } from '@/features/organizations/application/use-active-organization';
 
 export function CreateProjectDialog() {
   const [open, setOpen] = useState(false);
@@ -21,12 +22,17 @@ export function CreateProjectDialog() {
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const addProject = useProjectStore((state) => state.addProject);
+  const activeOrganizationId = useOrganizationStore((state) => state.activeOrganizationId);
 
   const handleSubmit = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || !activeOrganizationId) return;
 
     setIsSubmitting(true);
-    const project = await mockProjectApiAdapter.create({ name: name.trim(), description: description.trim() });
+    const project = await mockProjectApiAdapter.create({
+      organizationId: activeOrganizationId,
+      name: name.trim(),
+      description: description.trim(),
+    });
     addProject(project);
     setIsSubmitting(false);
     setOpen(false);
@@ -59,7 +65,7 @@ export function CreateProjectDialog() {
           <Button variant="ghost" onClick={() => setOpen(false)}>
             Cancelar
           </Button>
-          <Button onClick={handleSubmit} disabled={!name.trim() || isSubmitting}>
+          <Button onClick={handleSubmit} disabled={!name.trim() || !activeOrganizationId || isSubmitting}>
             {isSubmitting ? 'Creando…' : 'Crear proyecto'}
           </Button>
         </DialogFooter>

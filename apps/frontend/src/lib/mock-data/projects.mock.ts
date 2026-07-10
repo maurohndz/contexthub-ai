@@ -3,6 +3,7 @@ import type { Project } from '@/features/projects/domain/project';
 export const mockProjects: Project[] = [
   {
     id: 'proj-1',
+    organizationId: 'org-1',
     name: 'Sistema de Facturación',
     description: 'Documentación funcional y técnica del módulo de facturación electrónica.',
     docCount: 12,
@@ -10,6 +11,7 @@ export const mockProjects: Project[] = [
   },
   {
     id: 'proj-2',
+    organizationId: 'org-1',
     name: 'CRM Interno',
     description: 'Base de conocimiento del CRM usado por el equipo comercial.',
     docCount: 7,
@@ -17,6 +19,7 @@ export const mockProjects: Project[] = [
   },
   {
     id: 'proj-3',
+    organizationId: 'org-2',
     name: 'Recursos Humanos',
     description: 'Políticas, procesos y manuales de onboarding de RRHH.',
     docCount: 3,

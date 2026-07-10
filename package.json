@@ -6,7 +6,10 @@
     "dev:backend": "pnpm --filter @contexthub-ai/backend dev",
     "dev:frontend": "pnpm --filter @contexthub-ai/frontend dev",
     "build": "pnpm -r build",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "infra:up": "docker compose --env-file environments/.env.local up -d",
+    "infra:down": "docker compose --env-file environments/.env.local down",
+    "db:migrate:local": "pnpm --filter @contexthub-ai/backend db:migrate:local"
   },
   "packageManager": "pnpm@9.0.0"
 }
