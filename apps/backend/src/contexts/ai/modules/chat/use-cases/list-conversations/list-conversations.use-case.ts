@@ -1,18 +1,17 @@
 import {
-  ConversationNotFoundError,
   NotOrganizationMemberError,
   SpaceNotFoundInOrganizationError,
-  type ChatMessage,
+  type Conversation,
 } from '../../domain/chat';
 import type { ConversationRepositoryPort } from '../../ports/conversation-repository.port';
 import type { OrganizationMembershipPort } from '../../ports/organization-membership.port';
 import type { SpaceAccessPort } from '../../ports/space-access.port';
 
 /**
- * Returns the messages of one of the user's conversations, oldest first.
- * The conversation must belong to the requesting user and the space.
+ * Returns the user's conversations in a space, most recently active
+ * first. Feeds the chat history shown under each space in the sidebar.
  */
-export class GetChatHistoryUseCase {
+export class ListConversationsUseCase {
   constructor(
     private readonly membership: OrganizationMembershipPort,
     private readonly spaceAccess: SpaceAccessPort,
@@ -22,23 +21,14 @@ export class GetChatHistoryUseCase {
   /**
    * @throws NotOrganizationMemberError when the user is not a member.
    * @throws SpaceNotFoundInOrganizationError when the space belongs to another org.
-   * @throws ConversationNotFoundError when the conversation is not the user's in that space.
    */
-  async execute(
-    userId: string,
-    organizationId: string,
-    spaceId: string,
-    conversationId: string,
-  ): Promise<ChatMessage[]> {
+  async execute(userId: string, organizationId: string, spaceId: string): Promise<Conversation[]> {
     const isMember = await this.membership.isMember(userId, organizationId);
     if (!isMember) throw new NotOrganizationMemberError();
 
     const spaceOrganization = await this.spaceAccess.findSpaceOrganization(spaceId);
     if (spaceOrganization !== organizationId) throw new SpaceNotFoundInOrganizationError();
 
-    const conversation = await this.conversations.findOwned(conversationId, spaceId, userId);
-    if (!conversation) throw new ConversationNotFoundError();
-
-    return this.conversations.listMessages(conversation.id);
+    return this.conversations.listBySpaceAndUser(spaceId, userId);
   }
 }

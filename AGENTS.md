@@ -173,6 +173,44 @@ lib/            → apiFetch, realtime (SSE), utils. Cross-cutting.
 
 ---
 
+## Realtime and query granularity (SSE)
+
+The app must feel live without polling. Two contracts make that work:
+
+1. **Queries are atomic per UI section.** Each section of the frontend
+   (space list with document counts, source list, conversation list, one
+   conversation's messages, …) is filled by its own endpoint/hook, so it
+   can be refetched independently when its data changes. Do not build
+   aggregate "screen" endpoints that force refetching unrelated data —
+   when a new section needs data, give it its own query.
+2. **SSE events are invalidation signals, never data carriers.** The
+   backend publishes an event (e.g. `document.updated`,
+   `conversation.updated`) saying *what* changed; the frontend reacts by
+   refetching the affected atomic query through the regular API. Events
+   carry only ids/status needed for routing the refetch.
+
+Backend rules:
+
+- Every use case that mutates data visible in some frontend section
+  publishes the matching event through the module's **own realtime
+  notifier port** (see `documents/ports/realtime-notifier.port.ts` and
+  `chat/ports/realtime-notifier.port.ts`); the infra adapter decides the
+  audience and publishes via `publishToUser` (Redis pub/sub → SSE).
+- Audience follows visibility: org-wide data (documents, spaces) fans out
+  to all active members; private data (conversations) goes only to the
+  owning user.
+- New event types are added to `RealtimeEventDto` in shared-types.
+
+Frontend rules:
+
+- Hooks/stores subscribe with `subscribeRealtime` and refetch their own
+  atomic query when a matching event arrives; they also subscribe to
+  `subscribeRealtimeReconnect` to refetch after a dropped channel (events
+  may have been lost).
+- Never mutate local state from an event payload: always refetch.
+
+---
+
 ## shared-types (`packages/shared-types`)
 
 - Contains **only HTTP contract DTOs** (request/response shapes) and

@@ -1,9 +1,14 @@
 import { useEffect } from 'react';
 import { useActiveOrganizationId } from '@/features/organizations/application/use-active-organization';
+import { subscribeRealtime, subscribeRealtimeReconnect } from '@/lib/realtime';
 import { projectApiAdapter } from '../infra/http-project-api.adapter';
 import { useProjectStore } from './use-active-project';
 
-/** Loads the active organization's spaces and reloads when it changes. */
+/**
+ * Loads the active organization's spaces and reloads when it changes.
+ * The list also refreshes in the background when a document.updated SSE
+ * event arrives, so per-space document counts stay live without polling.
+ */
 export function useProjectList() {
   const activeOrganizationId = useActiveOrganizationId();
   const projects = useProjectStore((state) => state.projects);
@@ -12,6 +17,7 @@ export function useProjectList() {
   const setProjects = useProjectStore((state) => state.setProjects);
   const clearProjects = useProjectStore((state) => state.clearProjects);
   const setLoading = useProjectStore((state) => state.setLoading);
+  const refreshProjects = useProjectStore((state) => state.refreshProjects);
 
   useEffect(() => {
     if (!activeOrganizationId) {
@@ -41,6 +47,32 @@ export function useProjectList() {
       cancelled = true;
     };
   }, [activeOrganizationId, loadedOrganizationId, clearProjects, setLoading, setProjects]);
+
+  useEffect(() => {
+    if (!activeOrganizationId) return;
+
+    const refresh = () => {
+      projectApiAdapter
+        .list(activeOrganizationId)
+        .then((result) => refreshProjects(result, activeOrganizationId))
+        .catch(() => {
+          // Background refresh: on failure the current list stays as is.
+        });
+    };
+
+    const unsubscribeEvents = subscribeRealtime((event) => {
+      if (event.type === 'document.updated' && event.organizationId === activeOrganizationId) {
+        refresh();
+      }
+    });
+    // After a channel reconnection an event may have been missed.
+    const unsubscribeReconnect = subscribeRealtimeReconnect(refresh);
+
+    return () => {
+      unsubscribeEvents();
+      unsubscribeReconnect();
+    };
+  }, [activeOrganizationId, refreshProjects]);
 
   return { projects, isLoading };
 }

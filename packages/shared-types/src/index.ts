@@ -102,6 +102,18 @@ export interface SaveAiProviderKeyDto {
 
 export type ChatRoleDto = 'user' | 'assistant';
 
+/**
+ * One chat thread of a user inside a space. `title` is null until the
+ * first user message names it.
+ */
+export interface ConversationDto {
+  id: string;
+  spaceId: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ChatSourceDto {
   documentName: string;
   fragment: string;
@@ -122,6 +134,7 @@ export interface SendChatMessageDto {
 }
 
 export interface SendChatMessageResponseDto {
+  conversationId: string;
   message: ChatMessageDto;
   sources: ChatSourceDto[];
 }
@@ -157,4 +170,16 @@ export interface DocumentUpdatedEventDto {
   status: DocumentProcessingStatusDto;
 }
 
-export type RealtimeEventDto = DocumentUpdatedEventDto;
+/**
+ * A conversation of the receiving user changed (created, renamed or got
+ * new messages). Sent only to the owner; the UI refetches the
+ * conversation list and, if loaded, that conversation's messages.
+ */
+export interface ConversationUpdatedEventDto {
+  type: 'conversation.updated';
+  organizationId: string;
+  spaceId: string;
+  conversationId: string;
+}
+
+export type RealtimeEventDto = DocumentUpdatedEventDto | ConversationUpdatedEventDto;

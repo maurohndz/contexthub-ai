@@ -1,7 +1,6 @@
 node_modules
 dist
 dist-ssr
-*.local
 *.tsbuildinfo
 
 # Secretos por ambiente: .env.local nunca se versiona (ver *.local arriba,

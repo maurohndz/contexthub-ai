@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatRole } from '../domain/chat';
+import type { ChatMessage, ChatRole, Conversation } from '../domain/chat';
 
 /** Payload to persist a chat message, with model/token metadata for assistant turns. */
 export interface AppendMessageData {
@@ -10,14 +10,19 @@ export interface AppendMessageData {
   tokensOutput?: number | null;
 }
 
-/** Persistence contract for conversations and their messages. */
+/**
+ * Persistence contract for conversations and their messages. A user can
+ * hold many conversations per space; every lookup is scoped by
+ * (spaceId, userId) so a user never reads another user's threads.
+ */
 export interface ConversationRepositoryPort {
-  /**
-   * One conversation per (space, user) for now: created on the first
-   * message and reused afterwards.
-   */
-  findOrCreate(spaceId: string, userId: string): Promise<{ id: string }>;
-  findBySpaceAndUser(spaceId: string, userId: string): Promise<{ id: string } | null>;
+  create(spaceId: string, userId: string): Promise<Conversation>;
+  /** The user's conversations in a space, most recently active first. */
+  listBySpaceAndUser(spaceId: string, userId: string): Promise<Conversation[]>;
+  /** Null when the conversation does not exist or belongs to another user/space. */
+  findOwned(conversationId: string, spaceId: string, userId: string): Promise<Conversation | null>;
+  setTitle(conversationId: string, title: string): Promise<void>;
+  /** Persists the message and bumps the conversation's updatedAt. */
   appendMessage(data: AppendMessageData): Promise<ChatMessage>;
   /** Returns the latest `limit` messages in chronological order. */
   listMessages(conversationId: string, limit?: number): Promise<ChatMessage[]>;

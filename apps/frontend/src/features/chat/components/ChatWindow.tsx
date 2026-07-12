@@ -8,11 +8,11 @@ import { ChatInput } from './ChatInput';
 import { EmptyState } from './EmptyState';
 import { MessageList } from './MessageList';
 
-/** Chat screen of the active project: history, composer and empty states. */
+/** Chat screen of the active conversation: history, composer and empty states. */
 export function ChatWindow() {
   const activeOrganization = useActiveOrganization();
   const activeProject = useActiveProject();
-  const { messages, isLoading, isSending } = useConversation(
+  const { messages, activeConversation, isLoading, isSending } = useConversation(
     activeOrganization?.id ?? null,
     activeProject?.id ?? null,
   );
@@ -34,7 +34,9 @@ export function ChatWindow() {
     <div className="flex h-full flex-col">
       <header className="border-b px-4 py-3">
         <h1 className="text-sm font-semibold text-foreground">{activeProject.name}</h1>
-        <p className="text-xs text-muted-foreground">{activeProject.description}</p>
+        <p className="text-xs text-muted-foreground">
+          {activeConversation?.title ?? activeProject.description}
+        </p>
       </header>
 
       {hasMessages ? (

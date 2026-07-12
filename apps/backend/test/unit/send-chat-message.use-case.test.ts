@@ -1,18 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   AiProviderNotConfiguredError,
+  ConversationNotFoundError,
   NotOrganizationMemberError,
   SpaceNotFoundInOrganizationError,
   UnknownChatModelError,
-  type ChatMessage,
-  type ChatRole,
   type ChatSource,
 } from '../../src/contexts/ai/modules/chat/domain/chat';
 import type { ContextSearchPort } from '../../src/contexts/ai/modules/chat/ports/context-search.port';
-import type {
-  AppendMessageData,
-  ConversationRepositoryPort,
-} from '../../src/contexts/ai/modules/chat/ports/conversation-repository.port';
 import type { LlmCredentialPort } from '../../src/contexts/ai/modules/chat/ports/llm-credential.port';
 import type {
   LlmGenerateInput,
@@ -20,54 +15,12 @@ import type {
   LlmProviderPort,
 } from '../../src/contexts/ai/modules/chat/ports/llm-provider.port';
 import { SendChatMessageUseCase } from '../../src/contexts/ai/modules/chat/use-cases/send-chat-message/send-chat-message.use-case';
-
-class FakeMembership {
-  members = new Set<string>();
-  async isMember(userId: string, organizationId: string): Promise<boolean> {
-    return this.members.has(`${userId}:${organizationId}`);
-  }
-}
-
-class FakeSpaceAccess {
-  spaces = new Map<string, string>(); // spaceId -> organizationId
-  async findSpaceOrganization(spaceId: string): Promise<string | null> {
-    return this.spaces.get(spaceId) ?? null;
-  }
-}
-
-class FakeConversationRepository implements ConversationRepositoryPort {
-  messages: Array<AppendMessageData & { id: string; createdAt: Date }> = [];
-  private counter = 0;
-
-  async findOrCreate(): Promise<{ id: string }> {
-    return { id: 'conv-1' };
-  }
-
-  async findBySpaceAndUser(): Promise<{ id: string } | null> {
-    return { id: 'conv-1' };
-  }
-
-  async appendMessage(data: AppendMessageData): Promise<ChatMessage> {
-    this.counter += 1;
-    const stored = { ...data, id: `msg-${this.counter}`, createdAt: new Date() };
-    this.messages.push(stored);
-    return {
-      id: stored.id,
-      role: stored.role as ChatRole,
-      content: stored.content,
-      createdAt: stored.createdAt,
-    };
-  }
-
-  async listMessages(): Promise<ChatMessage[]> {
-    return this.messages.map((message) => ({
-      id: message.id,
-      role: message.role as ChatRole,
-      content: message.content,
-      createdAt: message.createdAt,
-    }));
-  }
-}
+import {
+  FakeChatMembership,
+  FakeChatRealtimeNotifier,
+  FakeChatSpaceAccess,
+  FakeConversationRepository,
+} from './fakes/fake-chat-module';
 
 class FakeLlmCredentials implements LlmCredentialPort {
   keys = new Map<string, string>(); // `${orgId}:${provider}`
@@ -97,12 +50,13 @@ class FakeContextSearch implements ContextSearchPort {
 }
 
 function setup() {
-  const membership = new FakeMembership();
-  const spaceAccess = new FakeSpaceAccess();
+  const membership = new FakeChatMembership();
+  const spaceAccess = new FakeChatSpaceAccess();
   const conversations = new FakeConversationRepository();
   const credentials = new FakeLlmCredentials();
   const llm = new FakeLlm();
   const contextSearch = new FakeContextSearch();
+  const notifier = new FakeChatRealtimeNotifier();
 
   membership.members.add('user-1:org-1');
   spaceAccess.spaces.set('space-1', 'org-1');
@@ -115,15 +69,26 @@ function setup() {
     credentials,
     llm,
     contextSearch,
+    notifier,
   );
 
-  return { membership, spaceAccess, conversations, credentials, llm, contextSearch, useCase };
+  return {
+    membership,
+    spaceAccess,
+    conversations,
+    credentials,
+    llm,
+    contextSearch,
+    notifier,
+    useCase,
+  };
 }
 
 const BASE_INPUT = {
   userId: 'user-1',
   organizationId: 'org-1',
   spaceId: 'space-1',
+  conversationId: null,
   content: '¿Cómo funciona el alta de usuarios?',
   mode: 'explain-process',
   model: 'gemini-flash-latest',
@@ -144,6 +109,54 @@ describe('SendChatMessageUseCase', () => {
     expect(conversations.messages[1].modelName).toBe('gemini-flash-latest');
     expect(conversations.messages[1].tokensInput).toBe(10);
     expect(conversations.messages[1].tokensOutput).toBe(20);
+  });
+
+  it('starts a new conversation when none is given and titles it after the first message', async () => {
+    const { useCase, conversations, notifier } = setup();
+
+    const result = await useCase.execute(BASE_INPUT);
+
+    expect(result.conversationId).toBe('conv-1');
+    expect(conversations.conversations).toHaveLength(1);
+    expect(conversations.conversations[0].title).toBe('¿Cómo funciona el alta de usuarios?');
+    // The owner is notified so their other tabs refetch the thread.
+    expect(notifier.events).toEqual([
+      {
+        userId: 'user-1',
+        organizationId: 'org-1',
+        spaceId: 'space-1',
+        conversationId: 'conv-1',
+      },
+    ]);
+  });
+
+  it('reuses the given conversation and keeps its existing title', async () => {
+    const { useCase, conversations } = setup();
+    const existing = await conversations.create('space-1', 'user-1');
+    await conversations.setTitle(existing.id, 'Título original');
+
+    const result = await useCase.execute({ ...BASE_INPUT, conversationId: existing.id });
+
+    expect(result.conversationId).toBe(existing.id);
+    expect(conversations.conversations).toHaveLength(1);
+    expect(conversations.conversations[0].title).toBe('Título original');
+    expect(conversations.messages.every((m) => m.conversationId === existing.id)).toBe(true);
+  });
+
+  it("rejects another user's conversation and one from another space", async () => {
+    const { useCase, conversations, spaceAccess, membership } = setup();
+    const foreign = await conversations.create('space-1', 'user-2');
+
+    await expect(
+      useCase.execute({ ...BASE_INPUT, conversationId: foreign.id }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+
+    membership.members.add('user-1:org-1');
+    spaceAccess.spaces.set('space-2', 'org-1');
+    const otherSpace = await conversations.create('space-2', 'user-1');
+    await expect(
+      useCase.execute({ ...BASE_INPUT, conversationId: otherSpace.id }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
   });
 
   it('builds the system prompt from the chosen mode template', async () => {

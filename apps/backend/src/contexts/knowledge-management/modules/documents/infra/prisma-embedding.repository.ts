@@ -40,13 +40,16 @@ export class PrismaEmbeddingRepository implements EmbeddingRepositoryPort {
         const values = Prisma.join(
           batch.map((chunk) => {
             const chunkId = chunkIdByIndex.get(chunk.chunkIndex);
+            // updated_at is set explicitly: the column is app-managed
+            // (@updatedAt) and has no DB default, and Prisma's @updatedAt
+            // handling does not apply to raw SQL inserts.
             return Prisma.sql`(${chunkId}::uuid, ${spaceId}::uuid, ${toVectorLiteral(
               chunk.embedding,
-            )}::vector, ${modelName})`;
+            )}::vector, ${modelName}, now())`;
           }),
         );
         await tx.$executeRaw(
-          Prisma.sql`INSERT INTO ai.embeddings (chunk_id, space_id, embedding, model_name) VALUES ${values}`,
+          Prisma.sql`INSERT INTO ai.embeddings (chunk_id, space_id, embedding, model_name, updated_at) VALUES ${values}`,
         );
       }
     });

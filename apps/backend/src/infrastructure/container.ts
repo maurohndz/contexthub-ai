@@ -7,7 +7,10 @@ import { EmbeddingContextSearchAdapter } from '../contexts/ai/modules/chat/infra
 import { GeminiLlmAdapter } from '../contexts/ai/modules/chat/infra/gemini-llm.adapter';
 import { OrgCredentialLlmKeyAdapter } from '../contexts/ai/modules/chat/infra/org-credential-llm-key.adapter';
 import { PrismaConversationRepository } from '../contexts/ai/modules/chat/infra/prisma-conversation.repository';
+import { RedisChatRealtimeNotifierAdapter } from '../contexts/ai/modules/chat/infra/redis-chat-realtime-notifier.adapter';
+import { CreateConversationUseCase } from '../contexts/ai/modules/chat/use-cases/create-conversation/create-conversation.use-case';
 import { GetChatHistoryUseCase } from '../contexts/ai/modules/chat/use-cases/get-chat-history/get-chat-history.use-case';
+import { ListConversationsUseCase } from '../contexts/ai/modules/chat/use-cases/list-conversations/list-conversations.use-case';
 import { SendChatMessageUseCase } from '../contexts/ai/modules/chat/use-cases/send-chat-message/send-chat-message.use-case';
 import { BcryptPasswordHasher } from '../contexts/identity/modules/auth/infra/bcrypt-password-hasher';
 import { PrismaSessionRepository } from '../contexts/identity/modules/auth/infra/prisma-session.repository';
@@ -93,6 +96,7 @@ function createEmbeddingProvider(): EmbeddingProviderPort {
 const embeddingProvider = createEmbeddingProvider();
 
 const conversationRepository = new PrismaConversationRepository();
+const chatRealtimeNotifier = new RedisChatRealtimeNotifierAdapter();
 const llmProvider = new GeminiLlmAdapter();
 const llmCredentials = new OrgCredentialLlmKeyAdapter(aiCredentialRepository, credentialCipher, {
   gemini: env.GEMINI_API_KEY,
@@ -180,11 +184,23 @@ export const container = {
     llmCredentials,
     llmProvider,
     chatContextSearch,
+    chatRealtimeNotifier,
   ),
   getChatHistory: new GetChatHistoryUseCase(
     organizationMembership,
     spaceAccess,
     conversationRepository,
+  ),
+  listConversations: new ListConversationsUseCase(
+    organizationMembership,
+    spaceAccess,
+    conversationRepository,
+  ),
+  createConversation: new CreateConversationUseCase(
+    organizationMembership,
+    spaceAccess,
+    conversationRepository,
+    chatRealtimeNotifier,
   ),
 
   // parameters/catalogs

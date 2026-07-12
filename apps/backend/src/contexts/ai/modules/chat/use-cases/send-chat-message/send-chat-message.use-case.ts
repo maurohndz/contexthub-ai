@@ -1,12 +1,15 @@
 import { AI_PROVIDER_CATALOG } from '../../../../../../shared/ai-provider-catalog';
 import {
   AiProviderNotConfiguredError,
+  ConversationNotFoundError,
   NotOrganizationMemberError,
   SpaceNotFoundInOrganizationError,
   UnknownChatModelError,
+  buildConversationTitle,
   isChatMode,
   type ChatMessage,
   type ChatSource,
+  type Conversation,
 } from '../../domain/chat';
 import { buildSystemPrompt } from '../../domain/chat-prompts';
 import type { ContextSearchPort } from '../../ports/context-search.port';
@@ -14,13 +17,18 @@ import type { ConversationRepositoryPort } from '../../ports/conversation-reposi
 import type { LlmCredentialPort } from '../../ports/llm-credential.port';
 import type { LlmProviderPort } from '../../ports/llm-provider.port';
 import type { OrganizationMembershipPort } from '../../ports/organization-membership.port';
+import type { ChatRealtimeNotifierPort } from '../../ports/realtime-notifier.port';
 import type { SpaceAccessPort } from '../../ports/space-access.port';
 
-/** A user question: target space, task mode and (optional) model. */
+/**
+ * A user question: target space, conversation (null starts a new one),
+ * task mode and (optional) model.
+ */
 export interface SendChatMessageInput {
   userId: string;
   organizationId: string;
   spaceId: string;
+  conversationId: string | null;
   content: string;
   mode: string;
   model: string | null;
@@ -28,6 +36,7 @@ export interface SendChatMessageInput {
 
 /** The assistant reply plus the deduplicated sources shown in the UI. */
 export interface SendChatMessageResult {
+  conversationId: string;
   message: ChatMessage;
   sources: ChatSource[];
 }
@@ -54,11 +63,13 @@ export class SendChatMessageUseCase {
     private readonly llmCredentials: LlmCredentialPort,
     private readonly llm: LlmProviderPort,
     private readonly contextSearch: ContextSearchPort,
+    private readonly notifier: ChatRealtimeNotifierPort,
   ) {}
 
   /**
    * @throws NotOrganizationMemberError when the user is not a member.
    * @throws SpaceNotFoundInOrganizationError when the space belongs to another org.
+   * @throws ConversationNotFoundError when the conversation is not the user's in that space.
    * @throws UnknownChatModelError when the requested model is not in the catalog.
    * @throws AiProviderNotConfiguredError when no API key is available.
    * @throws LlmRequestFailedError when the provider call fails (from the LLM adapter).
@@ -78,7 +89,7 @@ export class SendChatMessageUseCase {
 
     const context = await this.retrieveContext(input.spaceId, input.content);
 
-    const conversation = await this.conversations.findOrCreate(input.spaceId, input.userId);
+    const conversation = await this.resolveConversation(input);
     const history = await this.conversations.listMessages(conversation.id, HISTORY_MESSAGES);
 
     const reply = await this.llm.generate({
@@ -105,7 +116,19 @@ export class SendChatMessageUseCase {
       tokensOutput: reply.tokensOutput,
     });
 
+    if (conversation.title === null) {
+      await this.conversations.setTitle(conversation.id, buildConversationTitle(input.content));
+    }
+
+    await this.notifier.notifyConversationUpdated({
+      userId: input.userId,
+      organizationId: input.organizationId,
+      spaceId: input.spaceId,
+      conversationId: conversation.id,
+    });
+
     return {
+      conversationId: conversation.id,
       message: assistantMessage,
       sources: dedupeByDocument(context).map((source) => ({
         ...source,
@@ -115,6 +138,26 @@ export class SendChatMessageUseCase {
             : source.fragment,
       })),
     };
+  }
+
+  /**
+   * Resolves the target conversation: validates ownership when one is
+   * given, or starts a fresh thread when the input carries none.
+   *
+   * @throws ConversationNotFoundError when the given conversation is not
+   * the user's in that space.
+   */
+  private async resolveConversation(input: SendChatMessageInput): Promise<Conversation> {
+    if (input.conversationId === null) {
+      return this.conversations.create(input.spaceId, input.userId);
+    }
+    const conversation = await this.conversations.findOwned(
+      input.conversationId,
+      input.spaceId,
+      input.userId,
+    );
+    if (!conversation) throw new ConversationNotFoundError();
+    return conversation;
   }
 
   /**

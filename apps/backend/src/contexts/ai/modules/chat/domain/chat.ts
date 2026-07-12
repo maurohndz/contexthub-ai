@@ -39,6 +39,28 @@ export interface ChatMessage {
   createdAt: Date;
 }
 
+/**
+ * A chat thread of one user inside a space. `title` stays null until the
+ * first user message is persisted (see {@link buildConversationTitle}).
+ */
+export interface Conversation {
+  id: string;
+  spaceId: string;
+  title: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Titles derive from the first user message, capped for the sidebar. */
+const CONVERSATION_TITLE_MAX_LENGTH = 60;
+
+/** Derives a conversation title from the first user message. */
+export function buildConversationTitle(firstMessage: string): string {
+  const normalized = firstMessage.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= CONVERSATION_TITLE_MAX_LENGTH) return normalized;
+  return `${normalized.slice(0, CONVERSATION_TITLE_MAX_LENGTH)}…`;
+}
+
 /** Thrown when the requesting user does not belong to the organization. */
 export class NotOrganizationMemberError extends Error {
   constructor() {
@@ -52,6 +74,14 @@ export class SpaceNotFoundInOrganizationError extends Error {
   constructor() {
     super('El espacio no existe en esta organización');
     this.name = 'SpaceNotFoundInOrganizationError';
+  }
+}
+
+/** Thrown when the conversation does not exist or belongs to another user/space. */
+export class ConversationNotFoundError extends Error {
+  constructor() {
+    super('La conversación no existe en este espacio');
+    this.name = 'ConversationNotFoundError';
   }
 }
 

@@ -13,6 +13,11 @@ interface ProjectStoreState {
   setLoading: (isLoading: boolean) => void;
   setActiveProject: (projectId: string | null) => void;
   addProject: (project: Project) => void;
+  /**
+   * Background refresh (SSE invalidation): replaces the list without
+   * touching the active selection, unless the active project disappeared.
+   */
+  refreshProjects: (projects: Project[], organizationId: string) => void;
 }
 
 /** Store holding the loaded projects and the active selection. */
@@ -42,6 +47,17 @@ export const useProjectStore = create<ProjectStoreState>((set) => ({
       projects: [project, ...state.projects],
       activeProjectId: project.id,
     })),
+  refreshProjects: (projects, organizationId) =>
+    set((state) => {
+      // A stale refetch from a previous organization must not clobber the
+      // list loaded for the current one.
+      if (state.loadedOrganizationId !== organizationId) return state;
+      const activeStillExists = projects.some((project) => project.id === state.activeProjectId);
+      return {
+        projects,
+        activeProjectId: activeStillExists ? state.activeProjectId : (projects[0]?.id ?? null),
+      };
+    }),
 }));
 
 /** Returns the currently selected project, or null. */
